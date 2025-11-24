@@ -1,4 +1,4 @@
-import { HardhatUserConfig } from "hardhat/config";
+﻿import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 import "@nomicfoundation/hardhat-verify";
 import "@openzeppelin/hardhat-upgrades";
@@ -22,37 +22,37 @@ const config: HardhatUserConfig = {
     hardhat: {
       chainId: 31337,
     },
-    alfajores: {
-      url: process.env.CELO_ALFAJORES_RPC || "https://alfajores-forno.celo-testnet.org",
+    baseSepolia: {
+      url: process.env.BASE_SEPOLIA_RPC || "https://sepolia.base.org",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
-      chainId: 44787,
+      chainId: 84532,
     },
-    celo: {
-      url: process.env.CELO_MAINNET_RPC || "https://forno.celo.org",
+    base: {
+      url: process.env.BASE_MAINNET_RPC || "https://mainnet.base.org",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
-      chainId: 42220,
+      chainId: 8453,
     },
   },
   etherscan: {
     apiKey: {
-      alfajores: process.env.CELOSCAN_API_KEY || "",
-      celo: process.env.CELOSCAN_API_KEY || "",
+      baseSepolia: process.env.BASESCAN_API_KEY || "",
+      base: process.env.BASESCAN_API_KEY || "",
     },
     customChains: [
       {
-        network: "alfajores",
-        chainId: 44787,
+        network: "baseSepolia",
+        chainId: 84532,
         urls: {
-          apiURL: "https://api-alfajores.celoscan.io/api",
-          browserURL: "https://alfajores.celoscan.io",
+          apiURL: "https://api-sepolia.basescan.org/api",
+          browserURL: "https://sepolia.basescan.org",
         },
       },
       {
-        network: "celo",
-        chainId: 42220,
+        network: "base",
+        chainId: 8453,
         urls: {
-          apiURL: "https://api.celoscan.io/api",
-          browserURL: "https://celoscan.io",
+          apiURL: "https://api.basescan.org/api",
+          browserURL: "https://basescan.org",
         },
       },
     ],
