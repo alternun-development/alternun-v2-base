@@ -1,4 +1,4 @@
-# Alternun Protocol - Celo Implementation 🌱
+﻿# Alternun Protocol - Base Implementation 🌱
 
 > Regenerative Finance Protocol tokenizing verified underground gold reserves to fund environmental projects in Colombia
 
@@ -27,12 +27,20 @@ Alternun bridges real-world gold reserves with decentralized regenerative financ
 ## 🏗️ Architecture
 
 ### Technology Stack
-- **Blockchain**: Celo (EVM-compatible L1)
+- **Blockchain**: Base (Coinbase L2 on Ethereum)
 - **Language**: Solidity ^0.8.24
 - **Framework**: Hardhat + TypeScript
 - **Token Standard**: ERC-20
 - **Upgradeability**: OpenZeppelin UUPS Proxies
 - **Treasury Token**: USDT (Phase 1) → xAUT/Tether Gold (Phase 2)
+
+### Why Base?
+- ✅ Direct Coinbase integration
+- ✅ Access to 110M+ verified users
+- ✅ Instant tradability on Coinbase for tokens launched on Base
+- ✅ Active Base Builder Grants program
+- ✅ Low fees and fast transactions
+- ✅ Strong ReFi ecosystem
 
 ### Smart Contracts
 
@@ -82,11 +90,10 @@ Alternun bridges real-world gold reserves with decentralized regenerative financ
 - Git
 
 ### Installation
-
 ```bash
 # Clone the repository
-git clone https://github.com/alternun-development/alternun-celo.git
-cd alternun-celo
+git clone https://github.com/alternun-development/alternun-v2-base.git
+cd alternun-v2-base
 
 # Install dependencies
 npm install
@@ -100,30 +107,27 @@ npm run compile
 
 # Run tests
 npm test
-
-# Run tests with coverage
-npm run test:coverage
 ```
 
 ### Deployment
 
-#### Testnet (Alfajores)
+#### Testnet (Base Sepolia)
 ```bash
-npm run deploy:alfajores
+npm run deploy:sepolia
 ```
 
-#### Mainnet (Celo)
+#### Mainnet (Base)
 ```bash
-npm run deploy:celo
+npm run deploy:base
 ```
 
 ### Contract Verification
 ```bash
-# Alfajores
-npm run verify:alfajores -- DEPLOYED_CONTRACT_ADDRESS "Constructor Args"
+# Base Sepolia
+npm run verify:sepolia -- DEPLOYED_CONTRACT_ADDRESS "Constructor Args"
 
-# Mainnet
-npm run verify:celo -- DEPLOYED_CONTRACT_ADDRESS "Constructor Args"
+# Base Mainnet
+npm run verify:base -- DEPLOYED_CONTRACT_ADDRESS "Constructor Args"
 ```
 
 ## 📊 Tokenomics
@@ -154,13 +158,9 @@ Capacity = Σ(Category Amount × Weight × Commercial Factor) / 10,000
 - **20%** → Alternun Treasury (8% to mine owners, rest operational)
 
 ## 🧪 Testing
-
 ```bash
 # Run all tests
 npm test
-
-# Run specific test file
-npx hardhat test test/GBTToken.test.ts
 
 # Generate coverage report
 npm run test:coverage
@@ -170,9 +170,8 @@ REPORT_GAS=true npm test
 ```
 
 ## 📁 Project Structure
-
 ```
-alternun-celo/
+alternun-v2-base/
 ├── contracts/
 │   ├── tokens/          # GBT, pGBT, ePT token contracts
 │   ├── core/            # Treasury, Minter, ProjectVaults
@@ -184,7 +183,7 @@ alternun-celo/
 ├── test/                # Contract tests
 ├── docs/                # Additional documentation
 ├── SPECIFICATIONS.md    # Technical specifications
-├── MIGRATION_ANALYSIS.md # Stellar → Celo migration notes
+├── MIGRATION_ANALYSIS.md # Stellar → Base migration notes
 └── README.md           # This file
 ```
 
@@ -218,8 +217,8 @@ Track our environmental impact:
 ### Phase 1: Foundation (Q1 2025) ✅
 - [x] Smart contract architecture
 - [x] Stellar code analysis
-- [ ] Celo contract migration
-- [ ] Alfajores testnet deployment
+- [x] Base contract migration
+- [ ] Base Sepolia testnet deployment
 
 ### Phase 2: Launch (Q2 2025)
 - [ ] Security audit
@@ -229,7 +228,7 @@ Track our environmental impact:
 
 ### Phase 3: Growth (Q3 2025)
 - [ ] xAUT integration (gold-backed treasury)
-- [ ] Base blockchain deployment
+- [ ] Celo blockchain deployment (parallel)
 - [ ] Additional mine onboarding
 - [ ] Mobile app launch
 
@@ -256,7 +255,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- **Celo Foundation** - For supporting regenerative finance initiatives
+- **Coinbase & Base** - For building accessible L2 infrastructure
 - **Stellar Development Foundation** - For initial development support
 - **OpenZeppelin** - For secure smart contract libraries
 - **Local Communities** - In Nechí and Amalfi, Antioquia
