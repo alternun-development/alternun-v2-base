@@ -36,6 +36,8 @@ export const ABIS = {
     "function balanceOf(address owner) view returns (uint256)",
     "function decimals() view returns (uint8)",
     "function totalSupply() view returns (uint256)",
+    "function approve(address spender, uint256 amount) returns (bool)",
+    "function allowance(address owner, address spender) view returns (uint256)",
   ],
   
   minter: [
@@ -53,7 +55,7 @@ export const ABIS = {
     "function activateProject(uint256 projectId)",
     "function stake(uint256 projectId, uint256 amount)",
     "function unstake(uint256 projectId, uint256 amount)",
-    "function projects(uint256 projectId) view returns (tuple(string name, string ipfsHash, uint8 state, uint256 fundingGoal, uint256 totalStaked, uint256 totalProfits, uint256 createdAt, uint256 fundedAt, address projectOwner, bool acceptingStakes))",
+    "function projects(uint256) view returns (string name, string ipfsHash, uint8 state, uint256 fundingGoal, uint256 totalStaked, uint256 totalProfits, uint256 createdAt, uint256 fundedAt, address projectOwner, bool acceptingStakes)",
     "function getUserStake(uint256 projectId, address user) view returns (uint256 amount, uint256 pGBTReceived, uint256 profitsClaimed, uint256 debtRepaid, bool hasConvertedToEPT, bool canConvertToEPT)",
     "function projectCount() view returns (uint256)",
   ],
