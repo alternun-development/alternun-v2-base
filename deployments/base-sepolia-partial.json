@@ -1,0 +1,11 @@
+{
+  "network": "baseSepolia",
+  "chainId": 84532,
+  "timestamp": "2025-11-25",
+  "contracts": {
+    "usdt": "0x21db5aD253400eb396100f1E121b4b34bbc32bD6",
+    "gbtToken": "0x85b711F9d8629860696E215f1eFb5C51CeBd1F91",
+    "pgbtToken": "0xa70ccE827C1fD64a9A56b4f92685E521E1c398FC",
+    "eptToken": "0x11d772E59c0548f97e91D3b6325ef028fAc2a20f"
+  }
+}
