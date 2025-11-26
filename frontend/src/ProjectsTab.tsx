@@ -6,62 +6,53 @@ interface ProjectsTabProps {
   contracts: any;
 }
 
-const STATE_NAMES = ["Proposed", "Active", "Funded", "InConstruction", "Operational", "Completed", "Failed"];
-
 export default function ProjectsTab({ wallet, contracts }: ProjectsTabProps) {
   const [projects, setProjects] = useState<any[]>([]);
-  const [userStakes, setUserStakes] = useState<Map<number, any>>(new Map());
-  const [activeTab, setActiveTab] = useState<"open" | "construction" | "operational">("open");
-  const [loading, setLoading] = useState(true);
-  const [stakingProjectId, setStakingProjectId] = useState<number | null>(null);
-  const [stakeAmount, setStakeAmount] = useState<{ [key: number]: string }>({});
+  const [selectedProject, setSelectedProject] = useState<number | null>(null);
+  const [stakeAmount, setStakeAmount] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [hasAllowance, setHasAllowance] = useState(false);
+  const [dataLoading, setDataLoading] = useState(true);
 
   useEffect(() => {
-    if (!contracts || !wallet.address) return;
+    if (!contracts) {
+      setDataLoading(false);
+      return;
+    }
 
     const loadProjects = async () => {
       try {
         console.log("?? Loading projects...");
-        const projectCount = await contracts.vaults.projectCount();
-        console.log("Project count:", projectCount.toString());
-
+        const count = await contracts.vaults.projectCount();
         const projectsData = [];
-        for (let i = 0; i < Number(projectCount); i++) {
-          try {
-            const project = await contracts.vaults.projects(i);
-            console.log("Project", i, ":", project);
 
-            projectsData.push({
-              id: i,
-              name: project[0],
-              ipfsHash: project[1],
-              state: Number(project[2]),
-              fundingGoal: project[3],
-              totalStaked: project[4],
-              totalProfits: project[5],
-              createdAt: project[6],
-              fundedAt: project[7],
-              projectOwner: project[8],
-              acceptingStakes: project[9],
-            });
-
-            // Load user stake
-            if (wallet.address) {
-              const stake = await contracts.vaults.getUserStake(i, wallet.address);
-              if (stake[0] > 0n) {
-                userStakes.set(i, {
-                  amount: stake[0],
-                  pGBTReceived: stake[1],
-                  profitsClaimed: stake[2],
-                  debtRepaid: stake[3],
-                  hasConvertedToEPT: stake[4],
-                  canConvertToEPT: stake[5],
-                });
-              }
-            }
-          } catch (err) {
-            console.error(`Error loading project ${i}:`, err);
+        for (let i = 0; i < Number(count); i++) {
+          const project = await contracts.vaults.getProject(i);
+          
+          // Get pGBT metadata - skip for now
+          // const metadata = await contracts.pgbtToken.getProjectMetadata(i);
+          
+          // Get user stake if wallet connected
+          let userStake = null;
+          if (wallet.address) {
+            userStake = await contracts.vaults.getUserStake(i, wallet.address);
           }
+
+          projectsData.push({
+            id: i,
+            name: project.name,
+            ipfsHash: project.ipfsHash,
+            state: Number(project.state),
+            fundingGoal: contractHelpers.formatGBT(project.fundingGoal),
+            stakingUnit: contractHelpers.formatGBT(project.stakingUnit),
+            totalStaked: contractHelpers.formatGBT(project.totalStaked),
+            totalProfits: contractHelpers.formatGBT(project.totalProfits),
+            acceptingStakes: project.acceptingStakes,
+            userStake: userStake ? {
+              gbtAmount: contractHelpers.formatGBT(userStake.gbtAmount),
+              pGBTUnits: Number(userStake.pGBTUnits),
+            } : null,
+          });
         }
 
         setProjects(projectsData);
@@ -69,191 +60,378 @@ export default function ProjectsTab({ wallet, contracts }: ProjectsTabProps) {
       } catch (err) {
         console.error("? Error loading projects:", err);
       } finally {
-        setLoading(false);
+        setDataLoading(false);
       }
     };
 
     loadProjects();
   }, [contracts, wallet.address]);
 
-  const handleStake = async (projectId: number) => {
-    if (!wallet.address || !contracts) {
-      alert("Please connect your wallet first");
-      return;
-    }
+  useEffect(() => {
+    if (!contracts || !wallet.address || !stakeAmount || selectedProject === null) return;
 
-    const amount = stakeAmount[projectId];
-    if (!amount || parseFloat(amount) <= 0) {
-      alert("Please enter a valid stake amount");
-      return;
-    }
+    const checkAllowance = async () => {
+      try {
+        const amountWei = contractHelpers.parseGBT(stakeAmount);
+        const allowance = await contracts.gbtToken.allowance(
+          wallet.address,
+          contracts.addresses.vaults
+        );
+        setHasAllowance(allowance >= amountWei);
+      } catch (err) {
+        console.error("Error checking allowance:", err);
+        setHasAllowance(false);
+      }
+    };
 
-    const amountWei = contractHelpers.parseGBT(amount);
-    
-    if (!confirm(`Stake ${amount} GBT in this project?\n\nYou will receive ${amount} pGBT in return.`)) {
-      return;
-    }
+    checkAllowance();
+  }, [stakeAmount, selectedProject, contracts, wallet.address]);
 
-    setStakingProjectId(projectId);
+  const handleApprove = async () => {
+    if (!stakeAmount || selectedProject === null) return;
+
+    setLoading(true);
     try {
-      const allowance = await contracts.gbtToken.allowance(wallet.address, contracts.addresses.vaults);
-      if (allowance < amountWei) {
-        console.log("?? Approving GBT...");
-        const approveTx = await contracts.gbtToken.approve(contracts.addresses.vaults, amountWei);
-        await approveTx.wait();
-        console.log("? GBT approved");
+      const amountWei = contractHelpers.parseGBT(stakeAmount);
+      const tx = await contracts.gbtToken.approve(contracts.addresses.vaults, amountWei);
+      console.log("?? Approving GBT...", tx.hash);
+      await tx.wait();
+      setHasAllowance(true);
+      alert("? GBT approved successfully!");
+    } catch (error: any) {
+      console.error("? Approval error:", error);
+      alert(`Approval failed: ${error.reason || error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStake = async () => {
+    if (!stakeAmount || selectedProject === null || !hasAllowance) return;
+
+    const project = projects[selectedProject];
+    const stakingUnit = parseFloat(project.stakingUnit);
+    const amount = parseFloat(stakeAmount);
+
+    // CRITICAL: Validate multiple of staking unit
+    if (amount % stakingUnit !== 0) {
+      alert(
+        `? Invalid Amount\n\n` +
+        `Staking unit for this project: ${stakingUnit} GBT\n` +
+        `Your amount: ${amount} GBT\n\n` +
+        `Amount must be an exact multiple of ${stakingUnit}.\n\n` +
+        `Valid amounts: ${stakingUnit}, ${stakingUnit * 2}, ${stakingUnit * 3}, etc.`
+      );
+      return;
+    }
+
+    const units = amount / stakingUnit;
+
+    if (!confirm(
+      `Stake ${amount} GBT in ${project.name}?\n\n` +
+      `You will receive: ${units} pGBT unit${units > 1 ? 's' : ''}\n` +
+      `(1 unit = ${stakingUnit} GBT)\n\n` +
+      `50% goes to project funding\n` +
+      `50% held as reserve`
+    )) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const amountWei = contractHelpers.parseGBT(stakeAmount);
+      console.log("?? Staking GBT...", { projectId: selectedProject, amount: stakeAmount });
+
+      const tx = await contracts.vaults.stake(selectedProject, amountWei);
+      console.log("?? Transaction submitted:", tx.hash);
+
+      const receipt = await tx.wait();
+      console.log("? Transaction confirmed:", receipt);
+
+      alert(
+        `? Stake Successful!\n\n` +
+        `GBT Staked: ${amount} grams\n` +
+        `pGBT Units Received: ${units}\n\n` +
+        `Tx: ${tx.hash}`
+      );
+
+      // Reload projects
+      setDataLoading(true);
+      const count = await contracts.vaults.projectCount();
+      const projectsData = [];
+
+      for (let i = 0; i < Number(count); i++) {
+        const proj = await contracts.vaults.getProject(i);
+        const metadata = await contracts.pgbtToken.getProjectMetadata(i);
+        let userStake = null;
+        if (wallet.address) {
+          userStake = await contracts.vaults.getUserStake(i, wallet.address);
+        }
+
+        projectsData.push({
+          id: i,
+          name: proj.name,
+          ipfsHash: proj.ipfsHash,
+          state: Number(proj.state),
+          fundingGoal: contractHelpers.formatGBT(proj.fundingGoal),
+          stakingUnit: contractHelpers.formatGBT(proj.stakingUnit),
+          totalStaked: contractHelpers.formatGBT(proj.totalStaked),
+          totalProfits: contractHelpers.formatGBT(proj.totalProfits),
+          acceptingStakes: proj.acceptingStakes,
+          userStake: userStake ? {
+            gbtAmount: contractHelpers.formatGBT(userStake.gbtAmount),
+            pGBTUnits: Number(userStake.pGBTUnits),
+          } : null,
+        });
       }
 
-      console.log("?? Staking GBT...");
-      const tx = await contracts.vaults.stake(projectId, amountWei);
-      await tx.wait();
-      
-      alert(`? Successfully staked ${amount} GBT!\n\nYou received ${amount} pGBT`);
-      
-      // Reload
-      window.location.reload();
+      setProjects(projectsData);
+      setStakeAmount("");
     } catch (error: any) {
-      console.error("? Staking error:", error);
-      alert(`Staking failed: ${error.reason || error.message}`);
+      console.error("? Stake error:", error);
+      alert(`Stake failed: ${error.reason || error.message}`);
     } finally {
-      setStakingProjectId(null);
+      setLoading(false);
+      setDataLoading(false);
     }
   };
 
-  const filterProjects = (tab: string) => {
-    return projects.filter(p => {
-      if (tab === "open") return p.state === 1 && p.acceptingStakes;
-      if (tab === "construction") return p.state === 3;
-      if (tab === "operational") return p.state === 4;
-      return false;
-    });
-  };
+  if (dataLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="text-center mb-6">
+          <h2 className="text-4xl font-bold text-alternun mb-4">Regenerative Projects</h2>
+          <p className="text-gray">Loading projects...</p>
+        </div>
+      </div>
+    );
+  }
 
-  const calculateProgress = (project: any) => {
-    if (project.fundingGoal === 0n) return 0;
-    return Math.min((Number(project.totalStaked) / Number(project.fundingGoal)) * 100, 100);
-  };
+  const selectedProjectData = selectedProject !== null ? projects[selectedProject] : null;
+  const stakingUnit = selectedProjectData ? parseFloat(selectedProjectData.stakingUnit) : 0;
+  const amount = parseFloat(stakeAmount) || 0;
+  const isValidMultiple = stakingUnit > 0 && amount > 0 && amount % stakingUnit === 0;
+  const unitsToReceive = isValidMultiple ? amount / stakingUnit : 0;
+
+  const projectStates = ["Proposed", "Active", "Funded", "InConstruction", "Operational", "Completed", "Failed"];
 
   return (
     <div className="space-y-6">
       <div className="text-center mb-6">
-        <h2 className="text-4xl font-bold text-alternun mb-4">Projects</h2>
+        <h2 className="text-4xl font-bold text-alternun mb-4">Regenerative Projects</h2>
         <p className="text-gray" style={{ fontSize: "1.125rem", maxWidth: "32rem", margin: "0 auto" }}>
-          Invest in regenerative projects with gold-backed collateral
+          Support real-world sustainability initiatives by staking your GBT tokens.
         </p>
       </div>
 
-      <div style={{ display: "flex", gap: "0.75rem", marginBottom: "2rem" }}>
-        {[
-          { key: "open", label: "Open for Staking" },
-          { key: "construction", label: "In Construction" },
-          { key: "operational", label: "Operational" }
-        ].map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key as any)}
-            style={{
-              padding: "0.75rem 2rem",
-              borderRadius: "0.5rem",
-              fontWeight: "600",
-              transition: "all 0.3s",
-              backgroundColor: activeTab === tab.key ? "#14b8a6" : "#1f2937",
-              color: activeTab === tab.key ? "#0f172a" : "#9ca3af",
-              border: "none",
-              cursor: "pointer",
-              boxShadow: activeTab === tab.key ? "0 0 20px rgba(20, 184, 166, 0.3)" : "none"
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {loading ? (
-        <div className="text-center text-white" style={{ padding: "3rem" }}>
-          <p>Loading projects...</p>
+      {projects.length === 0 ? (
+        <div className="card text-center" style={{ padding: "3rem" }}>
+          <p className="text-gray" style={{ fontSize: "1.125rem" }}>
+            No projects available yet. Check back soon!
+          </p>
         </div>
       ) : (
         <div className="grid-2">
-          {filterProjects(activeTab).map((project) => {
-            const progress = calculateProgress(project);
-            const userStake = userStakes.get(project.id);
+          {/* Project List */}
+          <div className="space-y-4">
+            <h3 className="text-2xl font-bold text-white mb-4">Available Projects</h3>
 
-            return (
-              <div key={project.id} className="card">
-                <h3 className="text-2xl font-bold text-white mb-4">{project.name}</h3>
-                <p className="text-gray mb-4" style={{ fontSize: "0.875rem" }}>
-                  {STATE_NAMES[project.state]}
-                </p>
-
-                <div style={{ marginBottom: "1rem" }}>
-                  <div className="flex justify-between mb-2">
-                    <span className="text-white" style={{ fontSize: "0.875rem" }}>
-                      {contractHelpers.formatGBT(project.totalStaked)} / {contractHelpers.formatGBT(project.fundingGoal)} GBT
+            {projects.map((project) => (
+              <div
+                key={project.id}
+                className={`card cursor-pointer transition-all ${
+                  selectedProject === project.id ? "ring-2 ring-alternun" : ""
+                }`}
+                onClick={() => setSelectedProject(project.id)}
+                style={{
+                  opacity: project.acceptingStakes ? 1 : 0.6,
+                  cursor: project.acceptingStakes ? "pointer" : "not-allowed",
+                }}
+              >
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <h4 className="text-xl font-bold text-white">{project.name}</h4>
+                    <span
+                      style={{
+                        fontSize: "0.75rem",
+                        padding: "2px 8px",
+                        borderRadius: "12px",
+                        backgroundColor:
+                          project.state === 1 ? "#10b981" : project.state === 2 ? "#f59e0b" : "#6b7280",
+                        color: "white",
+                        fontWeight: "600",
+                      }}
+                    >
+                      {projectStates[project.state]}
                     </span>
-                    <span className="text-alternun font-bold">{progress.toFixed(0)}%</span>
                   </div>
-                  <div style={{ width: "100%", height: "8px", backgroundColor: "#374151", borderRadius: "4px" }}>
+                  {project.acceptingStakes && (
+                    <span
+                      style={{
+                        fontSize: "0.75rem",
+                        padding: "4px 12px",
+                        borderRadius: "12px",
+                        backgroundColor: "#14b8a6",
+                        color: "white",
+                        fontWeight: "600",
+                      }}
+                    >
+                      Open for Staking
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-2" style={{ fontSize: "0.875rem" }}>
+                  <div className="flex justify-between">
+                    <span className="text-gray">Staking Unit:</span>
+                    <span className="font-bold text-alternun">{project.stakingUnit} GBT</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray">Funding Goal:</span>
+                    <span className="font-bold text-white">{project.fundingGoal} GBT</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray">Total Staked:</span>
+                    <span className="font-bold text-white">{project.totalStaked} GBT</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray">Progress:</span>
+                    <span className="font-bold text-alternun">
+                      {((parseFloat(project.totalStaked) / parseFloat(project.fundingGoal)) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+
+                  {project.userStake && project.userStake.pGBTUnits > 0 && (
                     <div
                       style={{
-                        width: `${progress}%`,
-                        height: "100%",
-                        backgroundColor: "#14b8a6",
-                        borderRadius: "4px",
+                        marginTop: "0.75rem",
+                        padding: "0.5rem",
+                        backgroundColor: "rgba(20, 184, 166, 0.1)",
+                        borderRadius: "8px",
+                        border: "1px solid #14b8a6",
                       }}
-                    ></div>
+                    >
+                      <p style={{ fontSize: "0.75rem", color: "#14b8a6", fontWeight: "600" }}>
+                        Your Stake: {project.userStake.gbtAmount} GBT
+                      </p>
+                      <p style={{ fontSize: "0.75rem", color: "#14b8a6" }}>
+                        pGBT Units: {project.userStake.pGBTUnits}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Staking Panel */}
+          <div className="card">
+            {selectedProject === null ? (
+              <div className="text-center" style={{ padding: "3rem" }}>
+                <p className="text-gray" style={{ fontSize: "1.125rem" }}>
+                  Select a project to start staking
+                </p>
+              </div>
+            ) : !selectedProjectData.acceptingStakes ? (
+              <div className="text-center" style={{ padding: "3rem" }}>
+                <h3 className="text-2xl font-bold text-white mb-4">{selectedProjectData.name}</h3>
+                <p className="text-gray" style={{ fontSize: "1.125rem" }}>
+                  This project is not currently accepting stakes.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <h3 className="text-2xl font-bold text-white">Stake in {selectedProjectData.name}</h3>
+
+                <div
+                  style={{
+                    padding: "1rem",
+                    backgroundColor: "#374151",
+                    borderRadius: "8px",
+                    border: "1px solid #14b8a6",
+                  }}
+                >
+                  <p style={{ fontSize: "0.875rem", color: "#14b8a6", fontWeight: "600", marginBottom: "0.5rem" }}>
+                    ?? Staking Unit Information
+                  </p>
+                  <p style={{ fontSize: "0.875rem", color: "#d1d5db" }}>
+                    Staking Unit: <span className="font-bold text-alternun">{stakingUnit} GBT</span>
+                  </p>
+                  <p style={{ fontSize: "0.75rem", color: "#9ca3af", marginTop: "0.5rem" }}>
+                    You'll receive 1 pGBT unit per {stakingUnit} GBT staked.
+                    <br />
+                    Amount must be exact multiple of {stakingUnit}.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                    Amount to Stake (GBT)
+                  </label>
+                  <input
+                    type="number"
+                    value={stakeAmount}
+                    onChange={(e) => setStakeAmount(e.target.value)}
+                    className="input-field"
+                    placeholder={`Enter multiple of ${stakingUnit}`}
+                    step={stakingUnit}
+                  />
+                  {stakeAmount && !isValidMultiple && (
+                    <p style={{ fontSize: "0.75rem", color: "#ef4444", marginTop: "0.5rem" }}>
+                      ?? Amount must be a multiple of {stakingUnit} GBT
+                    </p>
+                  )}
+                  {isValidMultiple && (
+                    <p style={{ fontSize: "0.75rem", color: "#10b981", marginTop: "0.5rem" }}>
+                      ? Valid amount - You'll receive {unitsToReceive} pGBT unit{unitsToReceive > 1 ? 's' : ''}
+                    </p>
+                  )}
+                </div>
+
+                <div className="preview-card" style={{ backgroundColor: "#374151" }}>
+                  <h4 className="font-bold text-white mb-2">Staking Preview</h4>
+                  <div className="space-y-2" style={{ fontSize: "0.875rem" }}>
+                    <div className="flex justify-between">
+                      <span className="text-gray">GBT Amount:</span>
+                      <span className="font-bold text-white">{amount || 0} GBT</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray">pGBT Units:</span>
+                      <span className="font-bold text-alternun">{unitsToReceive} units</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray">To Funding:</span>
+                      <span className="font-bold text-white">{(amount / 2).toFixed(4)} GBT (50%)</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray">To Reserve:</span>
+                      <span className="font-bold text-white">{(amount / 2).toFixed(4)} GBT (50%)</span>
+                    </div>
                   </div>
                 </div>
 
-                {userStake && userStake.amount > 0n && (
-                  <div className="preview-card mb-4" style={{ backgroundColor: "#1f2937" }}>
-                    <h4 className="text-white font-bold mb-2">Your Position</h4>
-                    <div className="space-y-1" style={{ fontSize: "0.875rem" }}>
-                      <div className="flex justify-between">
-                        <span className="text-gray">GBT Staked:</span>
-                        <span className="text-white">{contractHelpers.formatGBT(userStake.amount)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray">pGBT Received:</span>
-                        <span className="text-alternun">{contractHelpers.formatGBT(userStake.pGBTReceived)}</span>
-                      </div>
-                    </div>
-                  </div>
+                {!hasAllowance && (
+                  <button
+                    onClick={handleApprove}
+                    className="btn-secondary"
+                    style={{ width: "100%", marginBottom: "0.5rem" }}
+                    disabled={loading || !wallet.address || !isValidMultiple}
+                  >
+                    {loading ? "Approving..." : "1. Approve GBT"}
+                  </button>
                 )}
 
-                {activeTab === "open" && project.acceptingStakes && (
-                  <div className="space-y-3">
-                    <input
-                      type="number"
-                      value={stakeAmount[project.id] || ""}
-                      onChange={(e) => setStakeAmount(prev => ({ ...prev, [project.id]: e.target.value }))}
-                      placeholder="Amount in GBT"
-                      className="input-field"
-                      style={{ width: "100%" }}
-                    />
-                    <button
-                      onClick={() => handleStake(project.id)}
-                      className="btn-primary"
-                      style={{ width: "100%" }}
-                      disabled={!wallet.address || stakingProjectId === project.id || !stakeAmount[project.id]}
-                    >
-                      {!wallet.address
-                        ? "Connect Wallet"
-                        : stakingProjectId === project.id
-                        ? "Staking..."
-                        : "Stake GBT"}
-                    </button>
-                  </div>
-                )}
+                <button
+                  onClick={handleStake}
+                  className="btn-primary"
+                  style={{ width: "100%" }}
+                  disabled={loading || !wallet.address || !hasAllowance || !isValidMultiple}
+                >
+                  {loading ? "Staking..." : hasAllowance ? "2. Stake GBT" : "Stake GBT"}
+                </button>
               </div>
-            );
-          })}
-        </div>
-      )}
-
-      {filterProjects(activeTab).length === 0 && !loading && (
-        <div className="text-center text-gray" style={{ padding: "3rem" }}>
-          <p style={{ fontSize: "1.125rem" }}>No projects in this category yet</p>
+            )}
+          </div>
         </div>
       )}
     </div>
