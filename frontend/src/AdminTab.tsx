@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { contractHelpers } from "./useContracts";
 import { CONTRACTS } from "./contracts.config";
 
@@ -8,14 +8,36 @@ interface AdminTabProps {
 }
 
 export default function AdminTab({ wallet, contracts }: AdminTabProps) {
+  const [activeSection, setActiveSection] = useState<"projects" | "mines">("projects");
+  const [mineAction, setMineAction] = useState<"new" | "update">("new");
+  const [existingMines, setExistingMines] = useState<any[]>([]);
+  const [selectedMineId, setSelectedMineId] = useState<string>("");
+  const [currentReserves, setCurrentReserves] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  // Project state
   const [newProject, setNewProject] = useState({
     name: "",
     ipfsHash: "",
     fundingGoal: "",
     fundingPool: "",
   });
+  const [projectToActivate, setProjectToActivate] = useState("");
 
-  const [reserves, setReserves] = useState({
+  // Mine state - New Mine
+  const [newMine, setNewMine] = useState({
+    name: "",
+    country: "",
+    municipality: "",
+    location: "",
+    notes: "",
+  });
+
+  // Mine state - Update/Report
+  const [niReport, setNiReport] = useState({
+    reportNumber: "",
+    reportDate: "",
+    ipfsHash: "QmPlaceholder", // Will be replaced with actual IPFS upload
     inferred: "",
     indicated: "",
     measured: "",
@@ -23,8 +45,75 @@ export default function AdminTab({ wallet, contracts }: AdminTabProps) {
     proven: "",
   });
 
-  const [projectToActivate, setProjectToActivate] = useState("");
-  const [loading, setLoading] = useState(false);
+  // Load existing mines
+  useEffect(() => {
+    if (!contracts) return;
+
+    const loadMines = async () => {
+      try {
+        const mineCount = await contracts.mineRegistry.mineCount();
+        const mines = [];
+        
+        for (let i = 0; i < Number(mineCount); i++) {
+          const mine = await contracts.mineRegistry.getMine(i);
+          mines.push({ id: i, ...mine });
+        }
+        
+        setExistingMines(mines);
+      } catch (err) {
+        console.error("Error loading mines:", err);
+      }
+    };
+
+    loadMines();
+  }, [contracts]);
+
+  // Load current reserves when mine is selected
+  useEffect(() => {
+    if (!contracts || !selectedMineId || mineAction !== "update") return;
+
+    const loadReserves = async () => {
+      try {
+        const mineId = parseInt(selectedMineId);
+        const reportCount = await contracts.mineRegistry.getReportCount(mineId);
+        
+        if (Number(reportCount) > 0) {
+          const reserves = await contracts.mineRegistry.getLatestReserves(mineId);
+          setCurrentReserves({
+            inferred: contractHelpers.formatGBT(reserves[0]),
+            indicated: contractHelpers.formatGBT(reserves[1]),
+            measured: contractHelpers.formatGBT(reserves[2]),
+            probable: contractHelpers.formatGBT(reserves[3]),
+            proven: contractHelpers.formatGBT(reserves[4]),
+          });
+        } else {
+          setCurrentReserves({
+            inferred: "0",
+            indicated: "0",
+            measured: "0",
+            probable: "0",
+            proven: "0",
+          });
+        }
+      } catch (err) {
+        console.error("Error loading reserves:", err);
+      }
+    };
+
+    loadReserves();
+  }, [selectedMineId, mineAction, contracts]);
+
+  const calculateDifference = () => {
+    if (!currentReserves) return null;
+
+    return {
+      inferred: (parseFloat(niReport.inferred || "0") - parseFloat(currentReserves.inferred)).toFixed(4),
+      indicated: (parseFloat(niReport.indicated || "0") - parseFloat(currentReserves.indicated)).toFixed(4),
+      measured: (parseFloat(niReport.measured || "0") - parseFloat(currentReserves.measured)).toFixed(4),
+      probable: (parseFloat(niReport.probable || "0") - parseFloat(currentReserves.probable)).toFixed(4),
+      proven: (parseFloat(niReport.proven || "0") - parseFloat(currentReserves.proven)).toFixed(4),
+    };
+  };
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,10 +146,7 @@ export default function AdminTab({ wallet, contracts }: AdminTabProps) {
   };
 
   const handleActivateProject = async () => {
-    if (!wallet.address || !contracts) {
-      alert("Please connect your wallet first");
-      return;
-    }
+    if (!wallet.address || !contracts) return;
 
     const projectId = parseInt(projectToActivate);
     if (isNaN(projectId)) {
@@ -85,35 +171,118 @@ export default function AdminTab({ wallet, contracts }: AdminTabProps) {
     }
   };
 
-  const handleUpdateReserves = async (e: React.FormEvent) => {
+  const handleRegisterNewMine = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!wallet.address || !contracts) {
-      alert("Please connect your wallet first");
-      return;
-    }
+    if (!wallet.address || !contracts) return;
 
-    if (!confirm("Update mine reserves?")) return;
+    const confirmMessage = `Register new mine:\n\nName: ${newMine.name}\nCountry: ${newMine.country}\nMunicipality: ${newMine.municipality}\n\nConfirm?`;
+    if (!confirm(confirmMessage)) return;
 
     setLoading(true);
     try {
-      const reservesData = {
-        inferred: reserves.inferred ? contractHelpers.parseGBT(reserves.inferred) : 0n,
-        indicated: reserves.indicated ? contractHelpers.parseGBT(reserves.indicated) : 0n,
-        measured: reserves.measured ? contractHelpers.parseGBT(reserves.measured) : 0n,
-        probable: reserves.probable ? contractHelpers.parseGBT(reserves.probable) : 0n,
-        proven: reserves.proven ? contractHelpers.parseGBT(reserves.proven) : 0n,
-      };
+      // Register mine
+      const tx1 = await contracts.mineRegistry.registerMine(
+        newMine.name,
+        newMine.country,
+        newMine.municipality,
+        newMine.location,
+        newMine.notes
+      );
+      const receipt = await tx1.wait();
+      
+      // Get the new mine ID (it's mineCount - 1)
+      const mineCount = await contracts.mineRegistry.mineCount();
+      const newMineId = Number(mineCount) - 1;
 
-      const tx = await contracts.minter.updateReserves(reservesData);
-      await tx.wait();
+      // Add initial NI 43-101 report
+      const reportDate = Math.floor(new Date(niReport.reportDate).getTime() / 1000);
       
-      // Get new capacity
-      const capacity = await contracts.minter.calculateCapacity();
+      const tx2 = await contracts.mineRegistry.addNI43101Report(
+        newMineId,
+        niReport.ipfsHash,
+        reportDate,
+        niReport.reportNumber,
+        contractHelpers.parseGBT(niReport.inferred || "0"),
+        contractHelpers.parseGBT(niReport.indicated || "0"),
+        contractHelpers.parseGBT(niReport.measured || "0"),
+        contractHelpers.parseGBT(niReport.probable || "0"),
+        contractHelpers.parseGBT(niReport.proven || "0")
+      );
+      await tx2.wait();
+
+      // Update minter reserves
+      const tx3 = await contracts.minter.updateReserves({
+        inferred: contractHelpers.parseGBT(niReport.inferred || "0"),
+        indicated: contractHelpers.parseGBT(niReport.indicated || "0"),
+        measured: contractHelpers.parseGBT(niReport.measured || "0"),
+        probable: contractHelpers.parseGBT(niReport.probable || "0"),
+        proven: contractHelpers.parseGBT(niReport.proven || "0"),
+      });
+      await tx3.wait();
+
+      alert(`? Mine registered successfully!\n\nMine ID: ${newMineId}\nName: ${newMine.name}`);
       
-      alert(`? Reserves updated!\n\nNew capacity: ${contractHelpers.formatGBT(capacity)} GBT`);
-      setReserves({ inferred: "", indicated: "", measured: "", probable: "", proven: "" });
+      // Reset forms
+      setNewMine({ name: "", country: "", municipality: "", location: "", notes: "" });
+      setNiReport({ reportNumber: "", reportDate: "", ipfsHash: "QmPlaceholder", inferred: "", indicated: "", measured: "", probable: "", proven: "" });
+      
+      // Reload mines
+      window.location.reload();
     } catch (error: any) {
-      console.error("? Update reserves error:", error);
+      console.error("? Register mine error:", error);
+      alert(`Failed: ${error.reason || error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateMine = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!wallet.address || !contracts || !selectedMineId) return;
+
+    const diff = calculateDifference();
+    if (!diff) return;
+
+    const confirmMessage = `Update mine reserves:\n\nCurrent ? New (Difference)\n\nInferred: ${currentReserves.inferred} ? ${niReport.inferred} (${diff.inferred})\nIndicated: ${currentReserves.indicated} ? ${niReport.indicated} (${diff.indicated})\nMeasured: ${currentReserves.measured} ? ${niReport.measured} (${diff.measured})\nProbable: ${currentReserves.probable} ? ${niReport.probable} (${diff.probable})\nProven: ${currentReserves.proven} ? ${niReport.proven} (${diff.proven})\n\nConfirm?`;
+    
+    if (!confirm(confirmMessage)) return;
+
+    setLoading(true);
+    try {
+      const mineId = parseInt(selectedMineId);
+      const reportDate = Math.floor(new Date(niReport.reportDate).getTime() / 1000);
+      
+      // Add new NI report
+      const tx1 = await contracts.mineRegistry.addNI43101Report(
+        mineId,
+        niReport.ipfsHash,
+        reportDate,
+        niReport.reportNumber,
+        contractHelpers.parseGBT(niReport.inferred || "0"),
+        contractHelpers.parseGBT(niReport.indicated || "0"),
+        contractHelpers.parseGBT(niReport.measured || "0"),
+        contractHelpers.parseGBT(niReport.probable || "0"),
+        contractHelpers.parseGBT(niReport.proven || "0")
+      );
+      await tx1.wait();
+
+      // Update minter with NEW TOTALS (contract calculates difference internally)
+      const tx2 = await contracts.minter.updateReserves({
+        inferred: contractHelpers.parseGBT(niReport.inferred || "0"),
+        indicated: contractHelpers.parseGBT(niReport.indicated || "0"),
+        measured: contractHelpers.parseGBT(niReport.measured || "0"),
+        probable: contractHelpers.parseGBT(niReport.probable || "0"),
+        proven: contractHelpers.parseGBT(niReport.proven || "0"),
+      });
+      await tx2.wait();
+
+      alert(`? Mine updated successfully!\n\nMine ID: ${mineId}\nNew capacity calculated`);
+      
+      setNiReport({ reportNumber: "", reportDate: "", ipfsHash: "QmPlaceholder", inferred: "", indicated: "", measured: "", probable: "", proven: "" });
+      setSelectedMineId("");
+      setCurrentReserves(null);
+    } catch (error: any) {
+      console.error("? Update mine error:", error);
       alert(`Failed: ${error.reason || error.message}`);
     } finally {
       setLoading(false);
@@ -127,248 +296,621 @@ export default function AdminTab({ wallet, contracts }: AdminTabProps) {
       <div className="text-center mb-6">
         <h2 className="text-4xl font-bold text-alternun mb-4">Administration Panel</h2>
         <p className="text-gray" style={{ fontSize: "1.125rem", maxWidth: "32rem", margin: "0 auto" }}>
-          Manage the Alternun ecosystem on Base blockchain
+          Manage Alternun ecosystem on Base blockchain
         </p>
       </div>
 
-      {/* Contract Status */}
-      <div className="card" style={{ background: "linear-gradient(135deg, #374151 0%, #1f2937 100%)" }}>
-        <h3 className="text-2xl font-bold text-white mb-6 flex items-center">
-          <span style={{ marginRight: "0.75rem" }}>??</span>
-          Contract Status
-        </h3>
-        <div className="grid-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
-          {[
-            { name: "GBT Token", address: networkContracts.gbtToken },
-            { name: "pGBT Token", address: networkContracts.pgbtToken },
-            { name: "ePT Token", address: networkContracts.eptToken },
-            { name: "Treasury", address: networkContracts.treasury },
-            { name: "Minter", address: networkContracts.minter },
-            { name: "Project Vaults", address: networkContracts.vaults },
-            { name: "Oracle", address: networkContracts.oracle }
-          ].map((contract) => (
-            <div key={contract.name} className="preview-card">
-              <div className="flex items-center justify-between" style={{ marginBottom: "0.5rem" }}>
-                <span style={{ fontSize: "0.875rem", fontWeight: "500", color: "#d1d5db" }}>{contract.name}</span>
-                <div style={{ width: "8px", height: "8px", backgroundColor: "#10b981", borderRadius: "50%" }}></div>
+      {/* Section Tabs */}
+      <div style={{ display: "flex", gap: "0.75rem", marginBottom: "2rem" }}>
+        <button
+          onClick={() => setActiveSection("projects")}
+          style={{
+            padding: "0.75rem 2rem",
+            borderRadius: "0.5rem",
+            fontWeight: "600",
+            backgroundColor: activeSection === "projects" ? "#14b8a6" : "#1f2937",
+            color: activeSection === "projects" ? "#0f172a" : "#9ca3af",
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          Project Management
+        </button>
+        <button
+          onClick={() => setActiveSection("mines")}
+          style={{
+            padding: "0.75rem 2rem",
+            borderRadius: "0.5rem",
+            fontWeight: "600",
+            backgroundColor: activeSection === "mines" ? "#14b8a6" : "#1f2937",
+            color: activeSection === "mines" ? "#0f172a" : "#9ca3af",
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          Mine Management
+        </button>
+      </div>
+
+      {activeSection === "projects" && (
+        <>
+          {/* Contract Status */}
+          <div className="card" style={{ background: "linear-gradient(135deg, #374151 0%, #1f2937 100%)" }}>
+            <h3 className="text-2xl font-bold text-white mb-6">?? Contract Status</h3>
+            <div className="grid-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+              {[
+                { name: "GBT Token", address: networkContracts.gbtToken },
+                { name: "pGBT Token", address: networkContracts.pgbtToken },
+                { name: "ePT Token", address: networkContracts.eptToken },
+                { name: "Treasury", address: networkContracts.treasury },
+                { name: "Minter", address: networkContracts.minter },
+                { name: "Vaults", address: networkContracts.vaults },
+                { name: "Oracle", address: networkContracts.oracle },
+                { name: "Mine Registry", address: networkContracts.mineRegistry },
+              ].map((contract) => (
+                <div key={contract.name} className="preview-card">
+                  <div className="flex items-center justify-between" style={{ marginBottom: "0.5rem" }}>
+                    <span style={{ fontSize: "0.875rem", fontWeight: "500", color: "#d1d5db" }}>{contract.name}</span>
+                    <div style={{ width: "8px", height: "8px", backgroundColor: "#10b981", borderRadius: "50%" }}></div>
+                  </div>
+                  <p style={{ fontSize: "0.65rem", fontFamily: "monospace", color: "#6b7280", wordBreak: "break-all" }}>
+                    {contract.address.substring(0, 12)}...
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Create Project */}
+          <div className="card" style={{ background: "linear-gradient(135deg, #065f46 0%, #047857 100%)", border: "1px solid #10b981" }}>
+            <h3 className="text-2xl font-bold text-white mb-6">??? Create New Project</h3>
+            <form onSubmit={handleCreateProject} className="space-y-4">
+              <div>
+                <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                  Project Name *
+                </label>
+                <input
+                  type="text"
+                  value={newProject.name}
+                  onChange={(e) => setNewProject({...newProject, name: e.target.value})}
+                  className="input-field"
+                  placeholder="e.g., Solar Farm Amalfi"
+                  required
+                  disabled={loading}
+                />
               </div>
-              <p style={{ fontSize: "0.65rem", fontFamily: "monospace", color: "#6b7280", wordBreak: "break-all" }}>
-                {contract.address.substring(0, 12)}...
-              </p>
-            </div>
-          ))}
-        </div>
 
-        <div style={{ marginTop: "1.5rem", padding: "1rem", backgroundColor: "#1e40af", borderRadius: "8px", border: "1px solid #3b82f6" }}>
-          <p className="font-bold text-white">System Status: Live on Base Sepolia</p>
-          <p style={{ color: "#bfdbfe", fontSize: "0.875rem" }}>All contracts deployed and operational</p>
-        </div>
-      </div>
+              <div>
+                <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                  IPFS Hash *
+                </label>
+                <input
+                  type="text"
+                  value={newProject.ipfsHash}
+                  onChange={(e) => setNewProject({...newProject, ipfsHash: e.target.value})}
+                  className="input-field"
+                  placeholder="QmXXXXXXXXXXXXXXXXXXXXXX"
+                  required
+                  disabled={loading}
+                />
+              </div>
 
-      {/* Create Project */}
-      <div className="card" style={{ background: "linear-gradient(135deg, #065f46 0%, #047857 100%)", border: "1px solid #10b981" }}>
-        <h3 className="text-2xl font-bold text-white mb-6 flex items-center">
-          <span style={{ marginRight: "0.75rem" }}>???</span>
-          Create New Project
-        </h3>
+              <div className="grid-2">
+                <div>
+                  <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                    Funding Goal (GBT) *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.0000001"
+                    value={newProject.fundingGoal}
+                    onChange={(e) => setNewProject({...newProject, fundingGoal: e.target.value})}
+                    className="input-field"
+                    placeholder="10000"
+                    required
+                    disabled={loading}
+                  />
+                </div>
 
-        <form onSubmit={handleCreateProject} className="space-y-4">
-          <div>
-            <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
-              Project Name *
-            </label>
-            <input
-              type="text"
-              value={newProject.name}
-              onChange={(e) => setNewProject({...newProject, name: e.target.value})}
-              className="input-field"
-              placeholder="e.g., Solar Farm Amalfi"
-              required
-              disabled={loading}
-            />
-          </div>
+                <div>
+                  <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                    Funding Pool Address *
+                  </label>
+                  <input
+                    type="text"
+                    value={newProject.fundingPool}
+                    onChange={(e) => setNewProject({...newProject, fundingPool: e.target.value})}
+                    className="input-field"
+                    placeholder="0x..."
+                    required
+                    disabled={loading}
+                  />
+                </div>
+              </div>
 
-          <div>
-            <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
-              IPFS Hash *
-            </label>
-            <input
-              type="text"
-              value={newProject.ipfsHash}
-              onChange={(e) => setNewProject({...newProject, ipfsHash: e.target.value})}
-              className="input-field"
-              placeholder="QmXXXXXXXXXXXXXXXXXXXXXX"
-              required
-              disabled={loading}
-            />
-          </div>
+              <button type="submit" className="btn-primary" style={{ width: "100%" }} disabled={loading || !wallet.address}>
+                {loading ? "Creating..." : "Create Project"}
+              </button>
+            </form>
 
-          <div className="grid-2">
-            <div>
-              <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
-                Funding Goal (GBT) *
-              </label>
-              <input
-                type="number"
-                step="0.0000001"
-                value={newProject.fundingGoal}
-                onChange={(e) => setNewProject({...newProject, fundingGoal: e.target.value})}
-                className="input-field"
-                placeholder="10000"
-                required
-                disabled={loading}
-              />
-            </div>
-
-            <div>
-              <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
-                Funding Pool Address *
-              </label>
-              <input
-                type="text"
-                value={newProject.fundingPool}
-                onChange={(e) => setNewProject({...newProject, fundingPool: e.target.value})}
-                className="input-field"
-                placeholder="0x..."
-                required
-                disabled={loading}
-              />
+            <div style={{ marginTop: "1.5rem", padding: "1rem", backgroundColor: "rgba(255,255,255,0.1)", borderRadius: "8px" }}>
+              <h4 className="text-white font-bold mb-2">Activate Project</h4>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  value={projectToActivate}
+                  onChange={(e) => setProjectToActivate(e.target.value)}
+                  className="input-field"
+                  placeholder="Project ID"
+                  style={{ flex: 1 }}
+                  disabled={loading}
+                />
+                <button onClick={handleActivateProject} className="btn-secondary" disabled={loading || !wallet.address || !projectToActivate}>
+                  Activate
+                </button>
+              </div>
             </div>
           </div>
+        </>
+      )}
 
-          <button
-            type="submit"
-            className="btn-primary"
-            style={{ width: "100%" }}
-            disabled={loading || !wallet.address}
-          >
-            {loading ? "Creating..." : "Create Project"}
-          </button>
-        </form>
+      {activeSection === "mines" && (
+        <>
+          {/* Mine Action Selection */}
+          <div className="card" style={{ background: "linear-gradient(135deg, #92400e 0%, #78350f 100%)", border: "1px solid #f59e0b" }}>
+            <h3 className="text-2xl font-bold text-white mb-6">?? Mine Management</h3>
+            
+            <div style={{ display: "flex", gap: "1rem", marginBottom: "2rem" }}>
+              <button
+                onClick={() => { setMineAction("new"); setSelectedMineId(""); setCurrentReserves(null); }}
+                style={{
+                  flex: 1,
+                  padding: "1rem",
+                  borderRadius: "0.5rem",
+                  fontWeight: "600",
+                  backgroundColor: mineAction === "new" ? "#f59e0b" : "rgba(255,255,255,0.1)",
+                  color: "white",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                Register New Mine
+              </button>
+              <button
+                onClick={() => { setMineAction("update"); setNiReport({ ...niReport, ipfsHash: "QmPlaceholder" }); }}
+                style={{
+                  flex: 1,
+                  padding: "1rem",
+                  borderRadius: "0.5rem",
+                  fontWeight: "600",
+                  backgroundColor: mineAction === "update" ? "#f59e0b" : "rgba(255,255,255,0.1)",
+                  color: "white",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                Update Existing Mine
+              </button>
+            </div>
 
-        <div style={{ marginTop: "1.5rem", padding: "1rem", backgroundColor: "rgba(255,255,255,0.1)", borderRadius: "8px" }}>
-          <h4 className="text-white font-bold mb-2">Activate Project</h4>
-          <div className="flex gap-2">
-            <input
-              type="number"
-              value={projectToActivate}
-              onChange={(e) => setProjectToActivate(e.target.value)}
-              className="input-field"
-              placeholder="Project ID"
-              style={{ flex: 1 }}
-              disabled={loading}
-            />
-            <button
-              onClick={handleActivateProject}
-              className="btn-secondary"
-              disabled={loading || !wallet.address || !projectToActivate}
-            >
-              Activate
-            </button>
+            {mineAction === "new" ? (
+              <form onSubmit={handleRegisterNewMine} className="space-y-4">
+                <h4 className="text-white font-bold text-lg mb-4">?? New Mine Information</h4>
+                
+                <div className="grid-2">
+                  <div>
+                    <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                      Mine Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={newMine.name}
+                      onChange={(e) => setNewMine({...newMine, name: e.target.value})}
+                      className="input-field"
+                      placeholder="e.g., AL-3 Mine"
+                      required
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                      Country *
+                    </label>
+                    <input
+                      type="text"
+                      value={newMine.country}
+                      onChange={(e) => setNewMine({...newMine, country: e.target.value})}
+                      className="input-field"
+                      placeholder="e.g., Colombia"
+                      required
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                      Municipality *
+                    </label>
+                    <input
+                      type="text"
+                      value={newMine.municipality}
+                      onChange={(e) => setNewMine({...newMine, municipality: e.target.value})}
+                      className="input-field"
+                      placeholder="e.g., Segovia"
+                      required
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                      Location
+                    </label>
+                    <input
+                      type="text"
+                      value={newMine.location}
+                      onChange={(e) => setNewMine({...newMine, location: e.target.value})}
+                      className="input-field"
+                      placeholder="GPS coordinates or description"
+                      disabled={loading}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                    Notes
+                  </label>
+                  <textarea
+                    value={newMine.notes}
+                    onChange={(e) => setNewMine({...newMine, notes: e.target.value})}
+                    className="input-field"
+                    placeholder="Additional information about the mine..."
+                    rows={3}
+                    disabled={loading}
+                  />
+                </div>
+
+                <hr style={{ border: "1px solid rgba(255,255,255,0.2)", margin: "2rem 0" }} />
+
+                <h4 className="text-white font-bold text-lg mb-4">?? Initial NI 43-101 Report</h4>
+
+                <div className="grid-2">
+                  <div>
+                    <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                      Report Number *
+                    </label>
+                    <input
+                      type="text"
+                      value={niReport.reportNumber}
+                      onChange={(e) => setNiReport({...niReport, reportNumber: e.target.value})}
+                      className="input-field"
+                      placeholder="e.g., NI43-101-2024-AL3-001"
+                      required
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                      Report Date *
+                    </label>
+                    <input
+                      type="date"
+                      value={niReport.reportDate}
+                      onChange={(e) => setNiReport({...niReport, reportDate: e.target.value})}
+                      className="input-field"
+                      required
+                      disabled={loading}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                    NI 43-101 PDF Upload
+                  </label>
+                  <div style={{ padding: "1rem", backgroundColor: "rgba(255,255,255,0.1)", borderRadius: "0.5rem", textAlign: "center" }}>
+                    <p style={{ fontSize: "0.875rem", color: "#fde68a", marginBottom: "0.5rem" }}>
+                      ?? IPFS Upload (Coming Tomorrow)
+                    </p>
+                    <p style={{ fontSize: "0.75rem", color: "#fef3c7" }}>
+                      For now, using placeholder hash: QmPlaceholder
+                    </p>
+                  </div>
+                </div>
+
+                <h5 className="text-white font-semibold text-base mb-3">Reserves Table (grams) *</h5>
+
+                <div className="grid-2">
+                  <div>
+                    <label className="text-white" style={{ display: "block", fontSize: "0.75rem", marginBottom: "0.25rem" }}>
+                      Inferred (15% weight)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.0000001"
+                      value={niReport.inferred}
+                      onChange={(e) => setNiReport({...niReport, inferred: e.target.value})}
+                      className="input-field"
+                      placeholder="0"
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-white" style={{ display: "block", fontSize: "0.75rem", marginBottom: "0.25rem" }}>
+                      Indicated (30% weight)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.0000001"
+                      value={niReport.indicated}
+                      onChange={(e) => setNiReport({...niReport, indicated: e.target.value})}
+                      className="input-field"
+                      placeholder="0"
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-white" style={{ display: "block", fontSize: "0.75rem", marginBottom: "0.25rem" }}>
+                      Measured (60% weight)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.0000001"
+                      value={niReport.measured}
+                      onChange={(e) => setNiReport({...niReport, measured: e.target.value})}
+                      className="input-field"
+                      placeholder="0"
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-white" style={{ display: "block", fontSize: "0.75rem", marginBottom: "0.25rem" }}>
+                      Probable (50% weight)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.0000001"
+                      value={niReport.probable}
+                      onChange={(e) => setNiReport({...niReport, probable: e.target.value})}
+                      className="input-field"
+                      placeholder="0"
+                      disabled={loading}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-white" style={{ display: "block", fontSize: "0.75rem", marginBottom: "0.25rem" }}>
+                    Proven (70% weight)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.0000001"
+                    value={niReport.proven}
+                    onChange={(e) => setNiReport({...niReport, proven: e.target.value})}
+                    className="input-field"
+                    placeholder="0"
+                    disabled={loading}
+                  />
+                </div>
+
+                <button type="submit" className="btn-primary" style={{ width: "100%" }} disabled={loading || !wallet.address}>
+                  {loading ? "Registering..." : "Register Mine & Add NI Report"}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleUpdateMine} className="space-y-4">
+                <h4 className="text-white font-bold text-lg mb-4">?? Update Existing Mine</h4>
+
+                <div>
+                  <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                    Select Mine *
+                  </label>
+                  <select
+                    value={selectedMineId}
+                    onChange={(e) => setSelectedMineId(e.target.value)}
+                    className="input-field"
+                    required
+                    disabled={loading}
+                  >
+                    <option value="">-- Select a mine --</option>
+                    {existingMines.map((mine) => (
+                      <option key={mine.id} value={mine.id}>
+                        Mine #{mine.id}: {mine.name} ({mine.municipality})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {currentReserves && (
+                  <div style={{ padding: "1rem", backgroundColor: "rgba(255,255,255,0.1)", borderRadius: "0.5rem" }}>
+                    <h5 className="text-white font-bold mb-2">Current Reserves</h5>
+                    <div className="grid-2" style={{ fontSize: "0.875rem" }}>
+                      <div className="flex justify-between text-white">
+                        <span>Inferred:</span>
+                        <span>{parseFloat(currentReserves.inferred).toFixed(4)} g</span>
+                      </div>
+                      <div className="flex justify-between text-white">
+                        <span>Indicated:</span>
+                        <span>{parseFloat(currentReserves.indicated).toFixed(4)} g</span>
+                      </div>
+                      <div className="flex justify-between text-white">
+                        <span>Measured:</span>
+                        <span>{parseFloat(currentReserves.measured).toFixed(4)} g</span>
+                      </div>
+                      <div className="flex justify-between text-white">
+                        <span>Probable:</span>
+                        <span>{parseFloat(currentReserves.probable).toFixed(4)} g</span>
+                      </div>
+                      <div className="flex justify-between text-white">
+                        <span>Proven:</span>
+                        <span>{parseFloat(currentReserves.proven).toFixed(4)} g</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <hr style={{ border: "1px solid rgba(255,255,255,0.2)", margin: "1.5rem 0" }} />
+
+                <h4 className="text-white font-bold text-lg mb-4">?? New NI 43-101 Report</h4>
+
+                <div className="grid-2">
+                  <div>
+                    <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                      Report Number *
+                    </label>
+                    <input
+                      type="text"
+                      value={niReport.reportNumber}
+                      onChange={(e) => setNiReport({...niReport, reportNumber: e.target.value})}
+                      className="input-field"
+                      placeholder="e.g., NI43-101-2024-AL1-002"
+                      required
+                      disabled={loading || !selectedMineId}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                      Report Date *
+                    </label>
+                    <input
+                      type="date"
+                      value={niReport.reportDate}
+                      onChange={(e) => setNiReport({...niReport, reportDate: e.target.value})}
+                      className="input-field"
+                      required
+                      disabled={loading || !selectedMineId}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+                    NI 43-101 PDF Upload
+                  </label>
+                  <div style={{ padding: "1rem", backgroundColor: "rgba(255,255,255,0.1)", borderRadius: "0.5rem", textAlign: "center" }}>
+                    <p style={{ fontSize: "0.875rem", color: "#fde68a", marginBottom: "0.5rem" }}>
+                      ?? IPFS Upload (Coming Tomorrow)
+                    </p>
+                    <p style={{ fontSize: "0.75rem", color: "#fef3c7" }}>
+                      For now, using placeholder hash: QmPlaceholder
+                    </p>
+                  </div>
+                </div>
+
+                <h5 className="text-white font-semibold text-base mb-3">NEW TOTAL Reserves (grams) *</h5>
+                <p style={{ fontSize: "0.75rem", color: "#fde68a", marginBottom: "1rem" }}>
+                  ?? Enter the complete new reserves table. The system will calculate the difference automatically.
+                </p>
+
+                <div className="grid-2">
+                  <div>
+                    <label className="text-white" style={{ display: "block", fontSize: "0.75rem", marginBottom: "0.25rem" }}>
+                      Inferred (15% weight)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.0000001"
+                      value={niReport.inferred}
+                      onChange={(e) => setNiReport({...niReport, inferred: e.target.value})}
+                      className="input-field"
+                      placeholder="0"
+                      disabled={loading || !selectedMineId}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-white" style={{ display: "block", fontSize: "0.75rem", marginBottom: "0.25rem" }}>
+                      Indicated (30% weight)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.0000001"
+                      value={niReport.indicated}
+                      onChange={(e) => setNiReport({...niReport, indicated: e.target.value})}
+                      className="input-field"
+                      placeholder="0"
+                      disabled={loading || !selectedMineId}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-white" style={{ display: "block", fontSize: "0.75rem", marginBottom: "0.25rem" }}>
+                      Measured (60% weight)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.0000001"
+                      value={niReport.measured}
+                      onChange={(e) => setNiReport({...niReport, measured: e.target.value})}
+                      className="input-field"
+                      placeholder="0"
+                      disabled={loading || !selectedMineId}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-white" style={{ display: "block", fontSize: "0.75rem", marginBottom: "0.25rem" }}>
+                      Probable (50% weight)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.0000001"
+                      value={niReport.probable}
+                      onChange={(e) => setNiReport({...niReport, probable: e.target.value})}
+                      className="input-field"
+                      placeholder="0"
+                      disabled={loading || !selectedMineId}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-white" style={{ display: "block", fontSize: "0.75rem", marginBottom: "0.25rem" }}>
+                    Proven (70% weight)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.0000001"
+                    value={niReport.proven}
+                    onChange={(e) => setNiReport({...niReport, proven: e.target.value})}
+                    className="input-field"
+                    placeholder="0"
+                    disabled={loading || !selectedMineId}
+                  />
+                </div>
+
+                {currentReserves && niReport.inferred && calculateDifference() && (
+                  <div style={{ padding: "1rem", backgroundColor: "rgba(16, 185, 129, 0.2)", borderRadius: "0.5rem", border: "1px solid #10b981" }}>
+                    <h5 className="text-white font-bold mb-2">?? Preview: Capacity Expansion</h5>
+                    <div className="grid-2" style={{ fontSize: "0.875rem" }}>
+                      {Object.entries(calculateDifference()!).map(([key, value]) => (
+                        <div key={key} className="flex justify-between text-white">
+                          <span className="capitalize">{key}:</span>
+                          <span style={{ color: parseFloat(value) >= 0 ? "#10b981" : "#ef4444" }}>
+                            {parseFloat(value) >= 0 ? "+" : ""}{value} g
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button type="submit" className="btn-primary" style={{ width: "100%" }} disabled={loading || !wallet.address || !selectedMineId}>
+                  {loading ? "Updating..." : "Add NI Report & Update Capacity"}
+                </button>
+              </form>
+            )}
           </div>
-        </div>
-      </div>
-
-      {/* Update Reserves */}
-      <div className="card" style={{ background: "linear-gradient(135deg, #92400e 0%, #78350f 100%)", border: "1px solid #f59e0b" }}>
-        <h3 className="text-2xl font-bold text-white mb-6 flex items-center">
-          <span style={{ marginRight: "0.75rem" }}>??</span>
-          Update Mine Reserves (NI 43-101)
-        </h3>
-
-        <form onSubmit={handleUpdateReserves} className="space-y-4">
-          <div>
-            <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
-              Inferred Resources (grams)
-            </label>
-            <input
-              type="number"
-              step="0.0000001"
-              value={reserves.inferred}
-              onChange={(e) => setReserves({...reserves, inferred: e.target.value})}
-              className="input-field"
-              placeholder="535400"
-              disabled={loading}
-            />
-            <p style={{ fontSize: "0.75rem", color: "#fef3c7", marginTop: "0.25rem" }}>Weight: 15%</p>
-          </div>
-
-          <div className="grid-2">
-            <div>
-              <label className="text-white" style={{ display: "block", fontSize: "0.75rem", fontWeight: "500", marginBottom: "0.25rem" }}>
-                Indicated (grams)
-              </label>
-              <input
-                type="number"
-                step="0.0000001"
-                value={reserves.indicated}
-                onChange={(e) => setReserves({...reserves, indicated: e.target.value})}
-                className="input-field"
-                placeholder="50000"
-                disabled={loading}
-              />
-              <p style={{ fontSize: "0.65rem", color: "#fde68a", marginTop: "0.25rem" }}>Weight: 30%</p>
-            </div>
-
-            <div>
-              <label className="text-white" style={{ display: "block", fontSize: "0.75rem", fontWeight: "500", marginBottom: "0.25rem" }}>
-                Measured (grams)
-              </label>
-              <input
-                type="number"
-                step="0.0000001"
-                value={reserves.measured}
-                onChange={(e) => setReserves({...reserves, measured: e.target.value})}
-                className="input-field"
-                placeholder="25000"
-                disabled={loading}
-              />
-              <p style={{ fontSize: "0.65rem", color: "#fde68a", marginTop: "0.25rem" }}>Weight: 60%</p>
-            </div>
-
-            <div>
-              <label className="text-white" style={{ display: "block", fontSize: "0.75rem", fontWeight: "500", marginBottom: "0.25rem" }}>
-                Probable (grams)
-              </label>
-              <input
-                type="number"
-                step="0.0000001"
-                value={reserves.probable}
-                onChange={(e) => setReserves({...reserves, probable: e.target.value})}
-                className="input-field"
-                placeholder="0"
-                disabled={loading}
-              />
-              <p style={{ fontSize: "0.65rem", color: "#fde68a", marginTop: "0.25rem" }}>Weight: 50%</p>
-            </div>
-
-            <div>
-              <label className="text-white" style={{ display: "block", fontSize: "0.75rem", fontWeight: "500", marginBottom: "0.25rem" }}>
-                Proven (grams)
-              </label>
-              <input
-                type="number"
-                step="0.0000001"
-                value={reserves.proven}
-                onChange={(e) => setReserves({...reserves, proven: e.target.value})}
-                className="input-field"
-                placeholder="1000"
-                disabled={loading}
-              />
-              <p style={{ fontSize: "0.65rem", color: "#fde68a", marginTop: "0.25rem" }}>Weight: 70%</p>
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            className="btn-primary"
-            style={{ width: "100%" }}
-            disabled={loading || !wallet.address}
-          >
-            {loading ? "Updating..." : "Update Reserves"}
-          </button>
-        </form>
-      </div>
+        </>
+      )}
     </div>
   );
 }

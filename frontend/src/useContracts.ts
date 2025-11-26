@@ -1,29 +1,26 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ethers } from "ethers";
 import { CONTRACTS, ABIS } from "./contracts.config";
 
-export const useContracts = (
-  provider: ethers.BrowserProvider | null,
-  signer: ethers.Signer | null,
-  chainId: number | null
-) => {
+export function useContracts(wallet: any) {
   const [contracts, setContracts] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const initContracts = async () => {
-      if (!provider || !signer || !chainId) {
-        setContracts(null);
-        setLoading(false);
-        return;
-      }
+    if (!wallet?.address || !wallet?.chainId) {
+      setContracts(null);
+      setLoading(false);
+      return;
+    }
 
+    const initContracts = async () => {
       try {
-        // Determine which network addresses to use
-        const isTestnet = chainId === 84532; // Base Sepolia
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+
+        const isTestnet = wallet.chainId === 84532;
         const addresses = isTestnet ? CONTRACTS.sepolia : CONTRACTS.mainnet;
 
-        // Initialize contracts
         const gbtToken = new ethers.Contract(addresses.gbtToken, ABIS.gbtToken, signer);
         const pgbtToken = new ethers.Contract(addresses.pgbtToken, ABIS.erc20, signer);
         const eptToken = new ethers.Contract(addresses.eptToken, ABIS.erc20, signer);
@@ -31,6 +28,7 @@ export const useContracts = (
         const minter = new ethers.Contract(addresses.minter, ABIS.minter, signer);
         const vaults = new ethers.Contract(addresses.vaults, ABIS.vaults, signer);
         const oracle = new ethers.Contract(addresses.oracle, ABIS.oracle, signer);
+        const mineRegistry = new ethers.Contract(addresses.mineRegistry, ABIS.mineRegistry, signer);
 
         setContracts({
           gbtToken,
@@ -40,48 +38,29 @@ export const useContracts = (
           minter,
           vaults,
           oracle,
+          mineRegistry,
           addresses,
         });
 
         setLoading(false);
-      } catch (error) {
-        console.error("Error initializing contracts:", error);
+      } catch (err) {
+        console.error("Error initializing contracts:", err);
         setLoading(false);
       }
     };
 
     initContracts();
-  }, [provider, signer, chainId]);
+  }, [wallet?.address, wallet?.chainId]);
 
   return { contracts, loading };
-};
+}
 
-// Helper functions for contract interactions
 export const contractHelpers = {
-  // Format token amounts (7 decimals for GBT/pGBT/ePT)
-  formatGBT: (amount: bigint) => ethers.formatUnits(amount, 7),
   parseGBT: (amount: string) => ethers.parseUnits(amount, 7),
-
-  // Format USDT (6 decimals)
-  formatUSDT: (amount: bigint) => ethers.formatUnits(amount, 6),
+  formatGBT: (amount: bigint) => ethers.formatUnits(amount, 7),
   parseUSDT: (amount: string) => ethers.parseUnits(amount, 6),
-
-  // Format basis points to percentage
+  formatUSDT: (amount: bigint) => ethers.formatUnits(amount, 6),
   bpsToPercent: (bps: bigint) => Number(bps) / 100,
-
-  // Format timestamp to date
-  formatDate: (timestamp: bigint) => {
-    return new Date(Number(timestamp) * 1000).toLocaleDateString();
-  },
-
-  // Project state enum
-  projectStates: [
-    "Proposed",
-    "Active",
-    "Funded",
-    "InConstruction",
-    "Operational",
-    "Completed",
-    "Failed",
-  ],
+  formatDate: (timestamp: bigint) => new Date(Number(timestamp) * 1000).toLocaleDateString(),
+  projectStates: ["Proposed", "Active", "Funded", "InConstruction", "Operational", "Completed", "Failed"],
 };

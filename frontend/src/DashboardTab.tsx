@@ -16,7 +16,10 @@ export default function DashboardTab({ wallet, contracts }: DashboardTabProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!contracts) return;
+    if (!contracts) {
+      setLoading(false);
+      return;
+    }
 
     const loadData = async () => {
       try {
@@ -32,7 +35,6 @@ export default function DashboardTab({ wallet, contracts }: DashboardTabProps) {
         setTotalMinted(parseFloat(contractHelpers.formatGBT(minted)));
         setAvailableCapacity(parseFloat(contractHelpers.formatGBT(capacity)));
 
-        // Load user balances if wallet connected
         if (wallet.address) {
           const [gbt, pgbt, ept] = await Promise.all([
             contracts.gbtToken.balanceOf(wallet.address),
@@ -63,6 +65,17 @@ export default function DashboardTab({ wallet, contracts }: DashboardTabProps) {
     ? (parseFloat(gbtBalance) + parseFloat(pgbtBalance)) * goldPrice
     : 0;
 
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="text-center mb-6">
+          <h2 className="text-4xl font-bold text-alternun mb-4">System Dashboard</h2>
+          <p className="text-gray">Loading data...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="text-center mb-6">
@@ -72,7 +85,6 @@ export default function DashboardTab({ wallet, contracts }: DashboardTabProps) {
         </p>
       </div>
 
-      {/* Main Metrics */}
       <div className="grid-4">
         <div className="preview-card text-center" style={{ background: "linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)", border: "2px solid #14b8a6" }}>
           <div className="text-3xl font-bold text-white mb-2">
@@ -106,7 +118,6 @@ export default function DashboardTab({ wallet, contracts }: DashboardTabProps) {
       </div>
 
       <div className="grid-2">
-        {/* Mining Resources Overview */}
         <div className="card">
           <h3 className="text-2xl font-bold text-white mb-6 flex items-center">
             <span style={{ marginRight: "0.75rem" }}>??</span>
@@ -173,7 +184,6 @@ export default function DashboardTab({ wallet, contracts }: DashboardTabProps) {
           </div>
         </div>
 
-        {/* Your Portfolio */}
         {wallet.address ? (
           <div className="card" style={{ background: "linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%)", border: "1px solid #3b82f6" }}>
             <h3 className="text-2xl font-bold text-white mb-6 flex items-center">

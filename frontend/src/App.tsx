@@ -9,18 +9,16 @@ import AdminTab from "./AdminTab";
 
 function App() {
   const [activeTab, setActiveTab] = useState<"mint" | "projects" | "dashboard" | "admin">("mint");
-  
+
   const {
     wallet,
-    provider,
-    signer,
     connectWallet,
     disconnectWallet,
     isBaseSepolia,
     isBaseMainnet,
   } = useWallet();
 
-  const { contracts, loading: contractsLoading } = useContracts(provider, signer, wallet.chainId);
+  const { contracts, loading: contractsLoading } = useContracts(wallet);
 
   return (
     <div style={{ minHeight: "100vh" }}>
@@ -150,7 +148,7 @@ function App() {
         color: "#9ca3af",
         fontSize: "0.875rem"
       }}>
-        Built on Base ? Regenerative Finance Protocol
+        Built on Base • Regenerative Finance Protocol
       </footer>
     </div>
   );

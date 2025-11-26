@@ -9,6 +9,7 @@ export const CONTRACTS = {
     vaults: "0x7201fADafe5eAa7cbab2982e204D0431651527a3",
     oracle: "0x530C977a22553Ad4140FEa0C137e9e163788DC26",
     usdt: "0x21db5aD253400eb396100f1E121b4b34bbc32bD6",
+    mineRegistry: "0x23c7f992b8466c40c2d605C16bA5b0AAd56C19fa",
   },
   mainnet: {
     gbtToken: "0x0000000000000000000000000000000000000000",
@@ -19,6 +20,7 @@ export const CONTRACTS = {
     vaults: "0x0000000000000000000000000000000000000000",
     oracle: "0x0000000000000000000000000000000000000000",
     usdt: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    mineRegistry: "0x0000000000000000000000000000000000000000",
   },
 };
 
@@ -48,6 +50,7 @@ export const ABIS = {
     "function totalMinted() view returns (uint256)",
     "function feeBps() view returns (uint256)",
     "function commercialFactorBps() view returns (uint256)",
+    "function updateReserves(tuple(uint256 inferred, uint256 indicated, uint256 measured, uint256 probable, uint256 proven) reserves)",
   ],
   
   vaults: [
@@ -62,5 +65,18 @@ export const ABIS = {
   
   oracle: [
     "function getGoldPrice() view returns (uint256)",
+  ],
+
+  mineRegistry: [
+    "function registerMine(string name, string country, string municipality, string location, string notes) returns (uint256)",
+    "function updateMineMetadata(uint256 mineId, string name, string country, string municipality, string location, string notes)",
+    "function addNI43101Report(uint256 mineId, string ipfsHash, uint256 reportDate, string reportNumber, uint256 inferred, uint256 indicated, uint256 measured, uint256 probable, uint256 proven)",
+    "function getMine(uint256 mineId) view returns (tuple(string name, string country, string municipality, string location, string notes, bool isActive, uint256 createdAt, uint256 lastUpdated))",
+    "function getLatestReport(uint256 mineId) view returns (tuple(string ipfsHash, uint256 reportDate, string reportNumber, uint256 timestamp, uint256 inferred, uint256 indicated, uint256 measured, uint256 probable, uint256 proven))",
+    "function getLatestReserves(uint256 mineId) view returns (uint256 inferred, uint256 indicated, uint256 measured, uint256 probable, uint256 proven)",
+    "function getMineReports(uint256 mineId) view returns (tuple(string ipfsHash, uint256 reportDate, string reportNumber, uint256 timestamp, uint256 inferred, uint256 indicated, uint256 measured, uint256 probable, uint256 proven)[])",
+    "function getReportCount(uint256 mineId) view returns (uint256)",
+    "function mineCount() view returns (uint256)",
+    "function setMineActive(uint256 mineId, bool isActive)",
   ],
 };

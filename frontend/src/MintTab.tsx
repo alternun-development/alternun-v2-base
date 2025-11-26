@@ -16,10 +16,13 @@ export default function MintTab({ wallet, contracts }: MintTabProps) {
   const [loading, setLoading] = useState(false);
   const [approving, setApproving] = useState(false);
   const [hasAllowance, setHasAllowance] = useState(false);
+  const [dataLoading, setDataLoading] = useState(true);
 
-  // Load contract data
   useEffect(() => {
-    if (!contracts || !wallet.address) return;
+    if (!contracts || !wallet.address) {
+      setDataLoading(false);
+      return;
+    }
 
     const loadData = async () => {
       try {
@@ -37,16 +40,20 @@ export default function MintTab({ wallet, contracts }: MintTabProps) {
         setUsdtBalance(contractHelpers.formatUSDT(usdt));
         setGbtBalance(contractHelpers.formatGBT(gbt));
 
-        console.log("? Data loaded:", { price: parseFloat(contractHelpers.formatGBT(price)), cap: parseFloat(contractHelpers.formatGBT(cap)) });
+        console.log("? Data loaded:", { 
+          price: parseFloat(contractHelpers.formatGBT(price)), 
+          cap: parseFloat(contractHelpers.formatGBT(cap)) 
+        });
       } catch (err) {
         console.error("? Error loading data:", err);
+      } finally {
+        setDataLoading(false);
       }
     };
 
     loadData();
   }, [contracts, wallet.address]);
 
-  // Calculate GBT output
   useEffect(() => {
     if (goldPrice && goldPrice > 0) {
       const amountNum = Number(amount) || 0;
@@ -57,7 +64,6 @@ export default function MintTab({ wallet, contracts }: MintTabProps) {
     }
   }, [amount, goldPrice]);
 
-  // Check allowance
   useEffect(() => {
     if (!contracts || !wallet.address || !amount) return;
 
@@ -114,7 +120,6 @@ export default function MintTab({ wallet, contracts }: MintTabProps) {
       
       alert(`? Mint Successful!\n\nGBT Minted: ${gbtOutput.toFixed(3)} grams\n\nTx: ${tx.hash}`);
       
-      // Refresh balances
       const [usdt, gbt, cap] = await Promise.all([
         contracts.usdt.balanceOf(wallet.address),
         contracts.gbtToken.balanceOf(wallet.address),
@@ -132,6 +137,17 @@ export default function MintTab({ wallet, contracts }: MintTabProps) {
     }
   };
 
+  if (dataLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="text-center mb-6">
+          <h2 className="text-4xl font-bold text-alternun mb-4">Mint Gold-Backed Tokens</h2>
+          <p className="text-gray">Loading contract data...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="text-center mb-6">
@@ -143,7 +159,6 @@ export default function MintTab({ wallet, contracts }: MintTabProps) {
 
       <div className="card">
         <div className="grid-2">
-          {/* Left Column */}
           <div className="space-y-4">
             <div>
               <label className="text-white font-semibold" style={{ display: "block", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
@@ -162,7 +177,6 @@ export default function MintTab({ wallet, contracts }: MintTabProps) {
               </div>
             </div>
 
-            {/* Mine Info */}
             <div style={{
               padding: "12px",
               background: "linear-gradient(135deg, #92400e 0%, #78350f 100%)",
@@ -180,7 +194,6 @@ export default function MintTab({ wallet, contracts }: MintTabProps) {
               </div>
             </div>
 
-            {/* Wallet Connected */}
             {wallet.address && (
               <div style={{
                 padding: "12px",
@@ -203,7 +216,6 @@ export default function MintTab({ wallet, contracts }: MintTabProps) {
               </div>
             )}
 
-            {/* Approve Button */}
             {!hasAllowance && (
               <button
                 onClick={handleApprove}
@@ -215,7 +227,6 @@ export default function MintTab({ wallet, contracts }: MintTabProps) {
               </button>
             )}
 
-            {/* Mint Button */}
             <button
               onClick={handleMint}
               className="btn-primary"
@@ -226,7 +237,6 @@ export default function MintTab({ wallet, contracts }: MintTabProps) {
             </button>
           </div>
 
-          {/* Right Column - Preview */}
           <div className="space-y-4">
             <h3 className="text-2xl font-bold text-white">
               Mint Preview {goldPrice && "(Live from Contract)"}
